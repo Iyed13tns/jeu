@@ -6,7 +6,7 @@ const currency = (n) =>
   new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(n);
 const nowIso = () => new Date().toISOString();
 
-// Fallback UUID + stockage sûr (corrige le bouton "Créer le compte" qui ne faisait rien si storage/crypto bloqués)
+// Fallback UUID + stockage sûr (évite que “rien ne se passe” si crypto/localStorage bloqués)
 const uid = () =>
   (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function")
     ? crypto.randomUUID()
@@ -485,7 +485,7 @@ function GameModal({ open, onClose, game }) {
           src={game.image || placeholderImage(game.title)}
           alt={game.title}
           className="w-full rounded-2xl border border-gray-800"
-          onError={(e) => { e.currentTarget.src = placeholderImage(game.title); }}
+          onError={(e) => { e.currentTarget.src = placeholderImage(g.title); }}
         />
         <div className="grid gap-2 text-gray-200">
           <div className="text-sm text-gray-400">Fournisseur: {game.provider}</div>
@@ -564,78 +564,66 @@ function RegisterView({ onDone }) {
   const [error, setError] = useState("");
 
   function submit(e) {
-    e.preventDefault();
+    if (e) e.preventDefault();
     setError("");
 
-    if (!email || !password) {
-      return setError("Email et mot de passe sont requis.");
+    try {
+      if (!email || !password) {
+        return setError("Email et mot de passe sont requis.");
+      }
+      if (!/^\S+@\S+\.\S+$/.test(email)) {
+        return setError("Email invalide.");
+      }
+
+      const users = loadUsers();
+      if (users.some((u) => u.email === email)) {
+        return setError("Un compte existe déjà avec cet email.");
+      }
+
+      const user = {
+        id: uid(),
+        email,
+        password,
+        pseudo: (pseudo || email.split("@")[0]).trim(),
+        balance: 0,
+        hasDeposit: false,
+        createdAt: nowIso(),
+      };
+
+      users.push(user);
+      if (!saveUsers(users)) {
+        return setError("Impossible d'enregistrer le compte (stockage bloqué). Désactive le mode privé et réessaie.");
+      }
+
+      const session = {
+        uid: user.id,
+        email: user.email,
+        pseudo: user.pseudo,
+        balance: user.balance,
+        hasDeposit: false,
+        createdAt: nowIso(),
+      };
+
+      if (!saveSession(session)) {
+        return setError("Compte créé, mais session non sauvegardée (stockage bloqué). Connecte-toi à nouveau.");
+      }
+
+      onDone(session);
+    } catch (err) {
+      console.error("Register error:", err);
+      setError("Une erreur est survenue. Réessaie.");
     }
-    if (!/^\S+@\S+\.\S+$/.test(email)) {
-      return setError("Email invalide.");
-    }
-
-    const users = loadUsers();
-    if (users.some((u) => u.email === email)) {
-      return setError("Un compte existe déjà avec cet email.");
-    }
-
-    const user = {
-      id: uid(),
-      email,
-      password,
-      pseudo: (pseudo || email.split("@")[0]).trim(),
-      balance: 0,
-      hasDeposit: false,
-      createdAt: nowIso(),
-    };
-
-    users.push(user);
-    if (!saveUsers(users)) {
-      return setError("Impossible d'enregistrer le compte (stockage bloqué). Désactive le mode privé et réessaie.");
-    }
-
-    const session = {
-      uid: user.id,
-      email: user.email,
-      pseudo: user.pseudo,
-      balance: user.balance,
-      hasDeposit: false,
-      createdAt: nowIso(),
-    };
-
-    if (!saveSession(session)) {
-      return setError("Compte créé, mais session non sauvegardée (stockage bloqué). Connecte-toi à nouveau.");
-    }
-
-    onDone(session);
   }
 
   return (
     <form onSubmit={submit} className="grid gap-3">
-      <Input
-        label="Pseudo"
-        placeholder="Votre pseudo"
-        value={pseudo}
-        onChange={(e) => setPseudo(e.target.value)}
-      />
-      <Input
-        label="Email"
-        type="email"
-        placeholder="vous@exemple.com"
-        value={email}
-        onChange={(e) => setEmail(e.target.value)}
-        required
-      />
-      <Input
-        label="Mot de passe"
-        type="password"
-        value={password}
-        onChange={(e) => setPassword(e.target.value)}
-        required
-      />
+      <Input label="Pseudo" placeholder="Votre pseudo" value={pseudo} onChange={(e) => setPseudo(e.target.value)} />
+      <Input label="Email" type="email" placeholder="vous@exemple.com" value={email} onChange={(e) => setEmail(e.target.value)} required />
+      <Input label="Mot de passe" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
       {error && <div className="text-sm text-red-400">{error}</div>}
       <div className="mt-2">
-        <Button type="submit" className="w-full">Créer le compte</Button>
+        {/* double sécurité : submit par type="submit" + onClick */}
+        <Button type="submit" onClick={submit} className="w-full">Créer le compte</Button>
       </div>
     </form>
   );
