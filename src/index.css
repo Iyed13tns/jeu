@@ -2,4 +2,7 @@
 @tailwind components;
 @tailwind utilities;
 
-body { @apply antialiased; }
+/* (optionnel) adoucir le rendu et fond sombre par défaut */
+:root { color-scheme: dark; }
+html, body, #root { height: 100%; }
+body { margin: 0; background: #000; }
