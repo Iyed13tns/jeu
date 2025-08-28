@@ -6,7 +6,23 @@ const currency = (n) =>
   new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(n);
 const nowIso = () => new Date().toISOString();
 
-// Fallback placeholder (si image manquante)
+// Fallback UUID + stockage sûr (corrige le bouton "Créer le compte" qui ne faisait rien si storage/crypto bloqués)
+const uid = () =>
+  (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function")
+    ? crypto.randomUUID()
+    : "uid-" + Math.random().toString(36).slice(2) + Date.now().toString(36);
+
+function safeSave(key, value) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+    return true;
+  } catch (e) {
+    console.error("Storage error:", e);
+    return false;
+  }
+}
+
+/* Placeholder image (fallback si une image jeu manque) */
 function placeholderImage(title = "Jeu") {
   return (
     "data:image/svg+xml;utf8," +
@@ -53,9 +69,9 @@ const GAMES = [
 /* ------------ Local Storage ------------ */
 const LS = { users: "cv_users", session: "cv_session", theme: "cv_theme", cookies: "cv_cookies" };
 const loadUsers   = () => { try { return JSON.parse(localStorage.getItem(LS.users)   || "[]");   } catch { return []; } };
-const saveUsers   = (u) => localStorage.setItem(LS.users, JSON.stringify(u));
+const saveUsers   = (u) => safeSave(LS.users, u);
 const loadSession = () => { try { return JSON.parse(localStorage.getItem(LS.session) || "null"); } catch { return null; } };
-const saveSession = (s) => localStorage.setItem(LS.session, JSON.stringify(s));
+const saveSession = (s) => safeSave(LS.session, s);
 
 /* ---------------- Composants UI ---------------- */
 const Badge = ({ children }) => (
@@ -288,7 +304,7 @@ function GamesGrid({ onPlay }) {
 /* -------------- Promotions ------------- */
 function PromotionsPage() {
   const promos = [
-    { id: 1, title: "Bonus de bienvenue 100%", text: "Pack de démarrage pour découvrir la plateforme." },
+    { id: 1, title: "Bonus de bienvenue 100%", text: "Déposez maintenant et recevez le double." },
     { id: 2, title: "Tournois exclusifs", text: "Classements réguliers et récompenses généreuses." },
     { id: 3, title: "Cashback hebdomadaire", text: "5% de retour sur vos sessions." },
   ];
@@ -300,7 +316,7 @@ function PromotionsPage() {
           <Card key={p.id} className="p-4">
             <div className="text-lg font-semibold text-yellow-400">{p.title}</div>
             <p className="text-sm text-gray-300 mt-2">{p.text}</p>
-            <Button className="mt-4 w-full">Activer</Button>
+            <Button className="mt-4 w-full" onClick={()=>window.scrollTo({top:0,behavior:'smooth'})}>Déposer</Button>
           </Card>
         ))}
       </div>
@@ -344,6 +360,64 @@ function Dashboard({ session, setSession }) {
           </div>
         </Card>
       </div>
+    </section>
+  );
+}
+
+/* ------------ Page Dépôt Requis -------- */
+function DepositRequired({ game, onBack, onDeposit, session }) {
+  const [amount, setAmount] = useState("");
+  const [error, setError] = useState("");
+
+  function submit(e) {
+    e.preventDefault();
+    const val = Number(amount);
+    if (!Number.isFinite(val) || val <= 0) return setError("Entrez un montant valide.");
+    onDeposit(val);
+  }
+
+  return (
+    <section className="mx-auto max-w-3xl px-4 py-10 text-gray-100">
+      <Card className="p-6 grid gap-4">
+        <div className="flex items-center gap-3">
+          <img
+            src={game?.image || placeholderImage(game?.title || "Jeu")}
+            alt={game?.title}
+            className="h-16 w-28 rounded-xl object-cover border border-gray-800"
+          />
+          <div>
+            <div className="text-lg font-bold">Dépôt requis</div>
+            <div className="text-sm text-gray-400">
+              Vous ne pouvez pas jouer à <span className="font-semibold text-gray-200">{game?.title}</span> tant que vous n’avez pas effectué un dépôt.
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-yellow-700/50 bg-yellow-500/10 p-4">
+          <div className="font-semibold text-yellow-400">Bonus de bienvenue 100%</div>
+          <div className="text-sm text-gray-300">Votre premier dépôt est <span className="font-semibold text-yellow-300">doublé</span> automatiquement.</div>
+        </div>
+
+        <form onSubmit={submit} className="grid gap-3">
+          <Input
+            label="Montant du dépôt (€)"
+            type="number"
+            min="1"
+            step="1"
+            placeholder="Ex: 50"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+          />
+          {error && <div className="text-sm text-red-400">{error}</div>}
+          <div className="grid grid-cols-2 gap-2">
+            <Button type="submit">Déposer et jouer</Button>
+            <Button variant="outline" type="button" onClick={onBack}>Retour</Button>
+          </div>
+          <div className="text-xs text-gray-500">
+            Solde actuel: <span className="text-yellow-400">{currency(session?.balance ?? 0)}</span>
+          </div>
+        </form>
+      </Card>
     </section>
   );
 }
@@ -466,7 +540,7 @@ function LoginView({ onDone, goRegister }) {
     const users = loadUsers();
     const u = users.find((x) => x.email === email && x.password === password);
     if (!u) return setError("Identifiants invalides");
-    const s = { uid: u.id, email: u.email, pseudo: u.pseudo, balance: u.balance ?? 1000, createdAt: nowIso() };
+    const s = { uid: u.id, email: u.email, pseudo: u.pseudo, balance: u.balance ?? 0, createdAt: nowIso(), hasDeposit: !!u.hasDeposit };
     saveSession(s);
     onDone(s);
   }
@@ -488,21 +562,77 @@ function RegisterView({ onDone }) {
   const [password, setPassword] = useState("");
   const [pseudo, setPseudo] = useState("");
   const [error, setError] = useState("");
+
   function submit(e) {
     e.preventDefault();
     setError("");
+
+    if (!email || !password) {
+      return setError("Email et mot de passe sont requis.");
+    }
+    if (!/^\S+@\S+\.\S+$/.test(email)) {
+      return setError("Email invalide.");
+    }
+
     const users = loadUsers();
-    if (users.some((u) => u.email === email)) return setError("Un compte existe déjà avec cet email.");
-    const user = { id: crypto.randomUUID(), email, password, pseudo: pseudo || email.split("@")[0], balance: 1000, createdAt: nowIso() };
-    users.push(user); saveUsers(users);
-    const s = { uid: user.id, email: user.email, pseudo: user.pseudo, balance: user.balance, createdAt: nowIso() };
-    saveSession(s); onDone(s);
+    if (users.some((u) => u.email === email)) {
+      return setError("Un compte existe déjà avec cet email.");
+    }
+
+    const user = {
+      id: uid(),
+      email,
+      password,
+      pseudo: (pseudo || email.split("@")[0]).trim(),
+      balance: 0,
+      hasDeposit: false,
+      createdAt: nowIso(),
+    };
+
+    users.push(user);
+    if (!saveUsers(users)) {
+      return setError("Impossible d'enregistrer le compte (stockage bloqué). Désactive le mode privé et réessaie.");
+    }
+
+    const session = {
+      uid: user.id,
+      email: user.email,
+      pseudo: user.pseudo,
+      balance: user.balance,
+      hasDeposit: false,
+      createdAt: nowIso(),
+    };
+
+    if (!saveSession(session)) {
+      return setError("Compte créé, mais session non sauvegardée (stockage bloqué). Connecte-toi à nouveau.");
+    }
+
+    onDone(session);
   }
+
   return (
     <form onSubmit={submit} className="grid gap-3">
-      <Input label="Pseudo" placeholder="Votre pseudo" value={pseudo} onChange={(e) => setPseudo(e.target.value)} />
-      <Input label="Email" type="email" placeholder="vous@exemple.com" value={email} onChange={(e) => setEmail(e.target.value)} required />
-      <Input label="Mot de passe" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+      <Input
+        label="Pseudo"
+        placeholder="Votre pseudo"
+        value={pseudo}
+        onChange={(e) => setPseudo(e.target.value)}
+      />
+      <Input
+        label="Email"
+        type="email"
+        placeholder="vous@exemple.com"
+        value={email}
+        onChange={(e) => setEmail(e.target.value)}
+        required
+      />
+      <Input
+        label="Mot de passe"
+        type="password"
+        value={password}
+        onChange={(e) => setPassword(e.target.value)}
+        required
+      />
       {error && <div className="text-sm text-red-400">{error}</div>}
       <div className="mt-2">
         <Button type="submit" className="w-full">Créer le compte</Button>
@@ -516,6 +646,7 @@ export default function CasinoDemo() {
   const [route, setRoute] = useState("home");
   const [session, _setSession] = useState(null);
   const [game, setGame] = useState(null);
+  const [pendingGame, setPendingGame] = useState(null); // jeu cliqué en attente de dépôt
 
   // Thème sombre par défaut
   useEffect(() => {
@@ -532,13 +663,35 @@ export default function CasinoDemo() {
   function onLogout() { _setSession(null); saveSession(null); navigate("home"); }
   function onLoginDone(s) { _setSession(s); navigate("home"); }
 
-  // Oblige connexion avant de jouer
   function handlePlay(g) {
     if (!session) {
       setRoute("login");
       return;
     }
+    if (!session.hasDeposit) {
+      setPendingGame(g);
+      setRoute("deposit");
+      return;
+    }
     setGame(g);
+  }
+
+  function applyDeposit(amount) {
+    if (!session) return;
+    const bonus = amount; // 100% bonus
+    const newBalance = (session.balance ?? 0) + amount + bonus;
+    const updated = { ...session, balance: newBalance, hasDeposit: true, lastDepositAt: nowIso() };
+    _setSession(updated);
+    saveSession(updated);
+    const users = loadUsers();
+    const idx = users.findIndex(u => u.id === session.uid);
+    if (idx >= 0) {
+      users[idx] = { ...users[idx], balance: newBalance, hasDeposit: true };
+      saveUsers(users);
+    }
+    setRoute("casino");
+    if (pendingGame) setGame(pendingGame);
+    setPendingGame(null);
   }
 
   const authOpen = route === "login" || route === "register";
@@ -558,6 +711,15 @@ export default function CasinoDemo() {
       {route === "casino" && <GamesGrid onPlay={handlePlay} />}
       {route === "promos" && <PromotionsPage />}
       {route === "dashboard" && <Dashboard session={session} setSession={(s)=>{ _setSession(s); saveSession(s); }} />}
+
+      {route === "deposit" && (
+        <DepositRequired
+          game={pendingGame}
+          session={session}
+          onBack={() => navigate("casino")}
+          onDeposit={applyDeposit}
+        />
+      )}
 
       <Footer navigate={navigate} />
 
